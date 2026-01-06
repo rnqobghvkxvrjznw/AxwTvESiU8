@@ -1,0 +1,63 @@
+name: Reset repository history (destructive)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type YES to proceed with destructive reset'
+        required: true
+        default: 'NO'
+
+jobs:
+  reset-history:
+    runs-on: ubuntu-latest
+    name: Reset repository history (destructive)
+    env:
+      TARGET_BRANCH: main
+      BACKUP_BRANCH: main-backup-${{ github.run_number }}
+      ORPHAN_BRANCH: clean-history
+      COMMIT_MSG: "‎ "
+    steps:
+      - name: Validate inputs and secrets
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "YES" ]; then
+            echo "Confirmation not provided. Set 'confirm' to YES when dispatching the workflow to proceed."
+            exit 1
+          fi
+          if [ -z "${{ secrets.REPO_PAT }}" ]; then
+            echo "Required secret REPO_PAT is not defined. Create a repo secret named REPO_PAT with a PAT that has repo scope."
+            exit 1
+          fi
+        shell: bash
+
+      - name: Checkout full repository (fetch all history, LFS enabled)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+          persist-credentials: false    # important: don't leave GITHUB_TOKEN on origin
+
+      - name: Configure Git and remote with PAT (do not print token)
+        run: |
+          set -euo pipefail
+          git config user.name "???"
+          git config user.email "noreply@unknown.com"
+          REMOTE_URL="https://${{ secrets.REPO_PAT }}@github.com/${{ github.repository }}.git"
+          git remote set-url origin "$REMOTE_URL"
+        shell: bash
+
+      - name: Create orphan branch, commit minimal tree and force push to target
+        run: |
+          set -euo pipefail
+          git checkout --orphan "${ORPHAN_BRANCH}"
+          git clean -fdx || true
+          echo "# 🎁" > README.md
+          git add README.md
+          git commit -m "${COMMIT_MSG}"
+          git push --force origin "${ORPHAN_BRANCH}:${TARGET_BRANCH}"
+        shell: bash
+
+      - name: Restore remote URL to origin without token
+        run: |
+          git remote set-url origin "https://github.com/${{ github.repository }}.git"
+        shell: bash
